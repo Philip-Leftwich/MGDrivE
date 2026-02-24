@@ -24,13 +24,18 @@ simTime <- 365        # simulation days
 sampTime <- 1         # output every day
 nPatch <- 1           # single patch
 adultPopEQ <- 500     # equilibrium adult population
+muAd <- 0.09          # adult daily mortality rate (shared with mm_params)
 
 # Multiple mating parameters
+# rho is now a named vector: one value per male genotype (ordered to match cube$genotypesID).
+# Females mated to preferred males (AA) have lower remating propensity than
+# those mated to less-preferred males (aa). A scalar would apply uniformly.
 mm_params <- list(
-  T_refractory = 5,             # 5 day refractory period after mating
-  rho = 0.05,                   # 5% base daily remating propensity
-  lambda = 0.001,               # encounter rate parameter
-  stochastic = FALSE,           # deterministic for this example
+  T_refractory = 5,                          # 5 day refractory period after mating
+  rho = c(AA = 0.02, Aa = 0.05, aa = 0.08), # genotype-conditional remating propensity
+  lambda = 0.001,                            # encounter rate parameter
+  stochastic = FALSE,                        # deterministic for this example
+  survival_f = rep(1 - muAd, 3),            # daily survival per female genotype (uniform here)
   modulate_fn = modulate_choosiness_linear,
   modulate_params = list(strictness = 0.2)
 )
@@ -71,7 +76,7 @@ params <- parameterizeMGDrivE(
   sampTime = sampTime,
   nPatch = nPatch,
   beta = 32,              # eggs per female per day
-  muAd = 0.09,            # adult mortality rate
+  muAd = muAd,            # adult mortality rate
   popGrowth = 1.1,        # population growth rate
   tEgg = 2,               # days in egg stage
   tLarva = 8,             # days in larva stage

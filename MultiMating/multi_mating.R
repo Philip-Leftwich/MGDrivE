@@ -287,13 +287,18 @@ calc_remating_prob <- function(popMale, rho, lambda) {
 #' Perform Remating Step (Deterministic)
 #'
 #' Executes one day of remating for eligible females.
-#' Females are extracted proportionally and redistributed according to
-#' current male availability and (optionally modulated) preferences.
+#' Each cohort of females (i, j) — female genotype i currently mated to
+#' male genotype j — remates at a rate determined by rho[j], allowing
+#' differential remating propensity based on current mate genotype.
+#' Remating females are redistributed according to current male availability
+#' and (optionally modulated) preferences.
 #'
 #' @param state MultiMating state list
 #' @param popMale Vector of male population by genotype
 #' @param base_eta Matrix of base mating preferences (from driveCube)
-#' @param rho Base remating propensity
+#' @param rho Numeric vector of length nGeno. Base remating propensity (0-1)
+#'   for females currently mated to each male genotype, ordered to match
+#'   genotypesID. A scalar is recycled to a uniform vector.
 #' @param lambda Encounter rate parameter
 #' @param modulate_fn Choosiness modulation function
 #' @param modulate_params Parameters for choosiness modulation
@@ -304,46 +309,41 @@ remate_deterministic <- function(state, popMale, base_eta, rho, lambda,
                                   modulate_fn = modulate_choosiness_none,
                                   modulate_params = NULL) {
 
-  # Calculate remating probability
-  p_remate <- calc_remating_prob(popMale, rho, lambda)
+  nGeno <- state$genotypesN
 
-  # Skip if no remating occurs
-  if (p_remate == 0 || sum(state$popFemale_eligible) == 0) {
-    return(state)
-  }
+  # Expand scalar rho to a vector (one value per male genotype)
+  if (length(rho) == 1) rho <- rep(rho, nGeno)
 
-  # Check if males are available
-  if (sum(popMale) == 0) {
-    return(state)
-  }
+  # Early exits
+  if (sum(state$popFemale_eligible) == 0) return(state)
+  if (sum(popMale) == 0) return(state)
 
   # Get effective preferences (with choosiness modulation)
   effective_eta <- modulate_fn(base_eta, popMale, modulate_params)
 
-  nGeno <- state$genotypesN
-
-  # For each female genotype
   for (i in seq_len(nGeno)) {
 
-    # Total eligible females of this genotype (across all mate genotypes)
-    total_eligible_i <- sum(state$popFemale_eligible[i, ])
-
-    if (total_eligible_i == 0) next
-
-    # Number remating
-    n_remating <- total_eligible_i * p_remate
-
-    # Remove from current positions (proportionally from each mate column)
-    removal_fraction <- p_remate
-    remating_females <- state$popFemale_eligible[i, ] * removal_fraction
-    state$popFemale_eligible[i, ] <- state$popFemale_eligible[i, ] * (1 - removal_fraction)
-
-    # Redistribute according to male availability and preferences
+    # Mate choice probabilities depend only on female genotype i; cache outside j loop
     mate_probs <- normalise(popMale * effective_eta[i, ])
 
-    # Add to new positions (enters buffer at day 1)
-    state$popFemale_buffer[i, , 1] <- state$popFemale_buffer[i, , 1] +
-                                       n_remating * mate_probs
+    for (j in seq_len(nGeno)) {
+
+      n_eligible_ij <- state$popFemale_eligible[i, j]
+      if (n_eligible_ij == 0) next
+
+      # Remating probability is conditional on current mate genotype j
+      p_remate_j <- calc_remating_prob(popMale, rho[j], lambda)
+      if (p_remate_j == 0) next
+
+      n_remating <- n_eligible_ij * p_remate_j
+
+      # Remove from current (i, j) cohort
+      state$popFemale_eligible[i, j] <- n_eligible_ij - n_remating
+
+      # Redistribute to new mates (enters buffer at day 1)
+      state$popFemale_buffer[i, , 1] <- state$popFemale_buffer[i, , 1] +
+                                         n_remating * mate_probs
+    }
   }
 
   return(state)
@@ -352,13 +352,16 @@ remate_deterministic <- function(state, popMale, base_eta, rho, lambda,
 
 #' Perform Remating Step (Stochastic)
 #'
-#' Stochastic version of remating. Uses binomial sampling for number
-#' remating and multinomial for mate choice.
+#' Stochastic version of remating. Each cohort (i, j) — female genotype i
+#' currently mated to male genotype j — remates at rate rho[j], with
+#' binomial sampling for number remating and multinomial for mate choice.
 #'
 #' @param state MultiMating state list
 #' @param popMale Vector of male population by genotype
 #' @param base_eta Matrix of base mating preferences (from driveCube)
-#' @param rho Base remating propensity
+#' @param rho Numeric vector of length nGeno. Base remating propensity (0-1)
+#'   for females currently mated to each male genotype, ordered to match
+#'   genotypesID. A scalar is recycled to a uniform vector.
 #' @param lambda Encounter rate parameter
 #' @param modulate_fn Choosiness modulation function
 #' @param modulate_params Parameters for choosiness modulation
@@ -369,48 +372,39 @@ remate_stochastic <- function(state, popMale, base_eta, rho, lambda,
                                modulate_fn = modulate_choosiness_none,
                                modulate_params = NULL) {
 
-  # Calculate remating probability
-  p_remate <- calc_remating_prob(popMale, rho, lambda)
+  nGeno <- state$genotypesN
 
-  # Skip if no remating occurs
-  if (p_remate == 0 || sum(state$popFemale_eligible) == 0) {
-    return(state)
-  }
+  # Expand scalar rho to a vector (one value per male genotype)
+  if (length(rho) == 1) rho <- rep(rho, nGeno)
 
-  # Check if males are available
-  if (sum(popMale) == 0) {
-    return(state)
-  }
+  # Early exits
+  if (sum(state$popFemale_eligible) == 0) return(state)
+  if (sum(popMale) == 0) return(state)
 
   # Get effective preferences (with choosiness modulation)
   effective_eta <- modulate_fn(base_eta, popMale, modulate_params)
 
-  nGeno <- state$genotypesN
-
-  # For each female genotype
   for (i in seq_len(nGeno)) {
 
-    # For each current mate genotype
+    # Mate choice probabilities depend only on female genotype i; cache outside j loop
+    mate_probs <- normalise(popMale * effective_eta[i, ])
+
     for (j in seq_len(nGeno)) {
 
       n_eligible <- state$popFemale_eligible[i, j]
-
       if (n_eligible == 0) next
 
-      # Sample number remating
-      n_remating <- rbinom(n = 1, size = round(n_eligible), prob = p_remate)
-
+      # Remating probability is conditional on current mate genotype j
+      p_remate_j <- calc_remating_prob(popMale, rho[j], lambda)
+      n_remating <- rbinom(n = 1, size = round(n_eligible), prob = p_remate_j)
       if (n_remating == 0) next
 
-      # Remove from current position
-      state$popFemale_eligible[i, j] <- state$popFemale_eligible[i, j] - n_remating
+      # Remove from current (i, j) cohort
+      state$popFemale_eligible[i, j] <- n_eligible - n_remating
 
-      # Choose new mates
-      mate_probs <- normalise(popMale * effective_eta[i, ])
-
+      # Choose new mates and add to buffer at day 1
       if (sum(mate_probs) > 0) {
         new_mates <- rmultinom(n = 1, size = n_remating, prob = mate_probs)
-        # Add to buffer at day 1
         state$popFemale_buffer[i, , 1] <- state$popFemale_buffer[i, , 1] + new_mates
       }
     }
@@ -491,12 +485,51 @@ get_total_mated <- function(state) {
 
 
 ###############################################################################
+# Mortality Correction
+###############################################################################
+
+#' Apply Mortality to Multiple Mating State
+#'
+#' Applies daily survival probabilities to all female cohorts tracked in
+#' the multiple mating state. MGDrivE applies mortality to its internal
+#' popFemale each day; without a matching correction here, the external
+#' state will accumulate females that have already died, causing upward drift.
+#'
+#' Call this at the start of each daily cycle, before remating, using the
+#' same survival rates that MGDrivE applies internally:
+#' \code{survival_f[i] = 1 - muAd * omega_f[i]}.
+#'
+#' @param state MultiMating state list
+#' @param survival_f Numeric vector of length nGeno. Daily survival probability
+#'   per female genotype, ordered to match genotypesID. A scalar is recycled
+#'   to a uniform vector.
+#'
+#' @return Updated state list with female counts reduced by mortality
+#'
+apply_mortality_multiMating <- function(state, survival_f) {
+
+  # Expand scalar survival to vector
+  if (length(survival_f) == 1) survival_f <- rep(survival_f, state$genotypesN)
+
+  # Apply to eligible pool.
+  # R recycles survival_f column-major, so survival_f[i] scales row i (female genotype i).
+  state$popFemale_eligible <- state$popFemale_eligible * survival_f
+
+  # Apply to refractory buffer along first dimension (female genotype)
+  state$popFemale_buffer <- sweep(state$popFemale_buffer, 1, survival_f, "*")
+
+  return(state)
+}
+
+
+###############################################################################
 # Daily Cycle Integration
 ###############################################################################
 
 #' Run One Day of Multiple Mating Dynamics
 #'
 #' Executes a complete daily cycle for the multiple mating extension:
+#' 0. Apply mortality to existing tracked females (if survival_f provided)
 #' 1. Remating of eligible females
 #' 2. Advance refractory buffer (aging)
 #' 3. Add newly mated females from standard mating
@@ -509,9 +542,12 @@ get_total_mated <- function(state) {
 #' @param base_eta Matrix of base mating preferences (from driveCube)
 #' @param newly_mated Matrix of newly mated females from this day's mating
 #' @param params List of parameters:
-#'   - rho: base remating propensity
+#'   - rho: numeric vector of length nGeno, base remating propensity per male
+#'       genotype (0-1). A scalar is recycled uniformly.
 #'   - lambda: encounter rate parameter
 #'   - stochastic: logical, use stochastic (TRUE) or deterministic (FALSE)
+#'   - survival_f: numeric vector of length nGeno, daily survival probability
+#'       per female genotype (1 - muAd * omega_f). NULL skips mortality step.
 #'   - modulate_fn: choosiness modulation function (optional)
 #'   - modulate_params: parameters for choosiness modulation (optional)
 #'
@@ -520,16 +556,24 @@ get_total_mated <- function(state) {
 oneDay_multiMating <- function(state, popMale, base_eta, newly_mated, params) {
 
   # Extract parameters
-  rho <- params$rho
-  lambda <- params$lambda
-  stochastic <- params$stochastic
-  modulate_fn <- params$modulate_fn
+  rho           <- params$rho
+  lambda        <- params$lambda
+  stochastic    <- params$stochastic
+  survival_f    <- params$survival_f
+  modulate_fn   <- params$modulate_fn
   modulate_params <- params$modulate_params
 
   # Defaults
-  if (is.null(stochastic)) stochastic <- FALSE
-  if (is.null(modulate_fn)) modulate_fn <- modulate_choosiness_none
+  if (is.null(stochastic))    stochastic    <- FALSE
+  if (is.null(modulate_fn))   modulate_fn   <- modulate_choosiness_none
   if (is.null(modulate_params)) modulate_params <- list()
+
+  # Step 0: Apply mortality to existing tracked females
+  # Mirrors the adult female death step inside MGDrivE's oneDay_PopDynamics,
+  # preventing upward drift relative to the internal population.
+  if (!is.null(survival_f)) {
+    state <- apply_mortality_multiMating(state, survival_f)
+  }
 
   # Step 1: Remating of eligible females
   if (stochastic) {

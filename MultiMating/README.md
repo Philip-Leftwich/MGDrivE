@@ -55,20 +55,24 @@ total_mated <- get_total_mated(mm_state)
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `T_refractory` | Integer | Days after mating before female can remate |
-| `rho` | Numeric (0-1) | Base daily probability of remating (when males abundant) |
+| `rho` | Numeric vector (0-1) | Base daily remating propensity per **current mate genotype** (length nGeno, ordered to match `genotypesID`). A scalar is recycled uniformly. |
 | `lambda` | Numeric | Encounter rate; higher = remating less dependent on male density |
 | `stochastic` | Logical | Use stochastic sampling (TRUE) or deterministic (FALSE) |
+| `survival_f` | Numeric vector (0-1) | Daily survival probability per female genotype (`1 - muAd * omega_f`). `NULL` skips mortality correction. |
 
 ### Remating Probability
 
-The daily probability that an eligible female remates:
+The daily probability that a female currently mated to male genotype *j* remates:
 
 ```
-p_remate = rho × (1 - exp(-lambda × total_males))
+p_remate(j) = rho[j] × (1 - exp(-lambda × total_males))
 ```
 
-- At low male density: `p_remate ≈ rho × lambda × total_males`
-- At high male density: `p_remate → rho`
+- At low male density: `p_remate(j) ≈ rho[j] × lambda × total_males`
+- At high male density: `p_remate(j) → rho[j]`
+
+This allows females mated to preferred (high-fitness) males to have a lower base
+remating propensity than those mated to less-preferred males.
 
 ### Choosiness Modulation Functions
 
@@ -128,3 +132,5 @@ switching$switch_rate
 - This extension operates externally to MGDrivE; no package modifications required
 - Both deterministic and stochastic modes are supported
 - The `get_total_mated()` function returns the combined population for use in offspring calculations
+- **Mortality correction**: Pass `survival_f = 1 - muAd * omega_f` in `mm_params` to prevent the tracked female counts from drifting upward relative to MGDrivE's internal population. Without this, females that die inside MGDrivE remain counted in `mm_state`.
+- **Genotype-conditional remating**: `rho` must be ordered to match `cube$genotypesID`. Use a scalar for uniform remating across all mate genotypes.

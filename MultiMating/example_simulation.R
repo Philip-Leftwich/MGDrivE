@@ -160,23 +160,24 @@ results <- data.frame(
 # Run simulation
 for (day in 1:simTime) {
 
-  # Record female population before mating step
-  popFemale_before <- patch$get_femalePopulation()
+  # Run pre-mating lifecycle steps individually so we can isolate the mating
+  # event. oneDay_PopDynamics() bundles death + maturation + mating + oviposition,
+  # making it impossible to extract newly mated females cleanly from the difference.
+  patch$oneDay_adultD()
+  patch$oneDay_pupaDM()
+  patch$oneDay_larvaDM()
+  patch$oneDay_eggDM()
+  patch$oneDay_pupation()
+  patch$oneDay_releases()
 
-  # Run standard MGDrivE daily dynamics
-  # Note: In a full integration, you'd call the network's oneDay() method
-  # Here we manually step through to demonstrate the integration point
-  patch$oneDay_PopDynamics()
+  # Snapshot popFemale immediately before mating. The mating function only adds
+  # to popFemale (popUnmated[i] * mate_probs -> popFemale[i,]), so the difference
+  # is exact: no negatives are possible, no mortality or oviposition contaminates it.
+  popFemale_pre_mating <- patch$get_femalePopulation()
+  patch$oneDay_mating()
+  newly_mated <- patch$get_femalePopulation() - popFemale_pre_mating
 
-  # Get population after mating
-  popFemale_after <- patch$get_femalePopulation()
-
-  # Extract newly mated females (females that weren't mated before)
-  # This is the increase in popFemale from the mating step
-  newly_mated <- popFemale_after - popFemale_before
-  newly_mated[newly_mated < 0] <- 0  # only count additions
-
-  # Get current male population
+  # Get current male population (post-mortality, pre-oviposition)
   popMale <- patch$get_malePopulation()
 
   # Run multiple mating dynamics
@@ -187,6 +188,10 @@ for (day in 1:simTime) {
     newly_mated = newly_mated,
     params = mm_params
   )
+
+  # Complete the remaining lifecycle steps
+  patch$oneDay_layEggs()
+  patch$oneDay_releaseEggs()
 
   # Get summary for this day
   summary <- summarise_multiMating(mm_state)

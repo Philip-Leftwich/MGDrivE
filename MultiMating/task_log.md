@@ -67,7 +67,55 @@ If `survival_f` is `NULL` in params the mortality step is skipped (opt-in).
 
 ---
 
+## Session 3 — Fix newly_mated extraction
+
+**Files modified:** `example_simulation.R`, `task_log.md`
+
+### Problem
+
+`newly_mated` was computed as the difference in `popFemale` bracketing a full `oneDay_PopDynamics()` call:
+
+```r
+popFemale_before <- patch$get_femalePopulation()
+patch$oneDay_PopDynamics()
+popFemale_after  <- patch$get_femalePopulation()
+newly_mated <- popFemale_after - popFemale_before
+newly_mated[newly_mated < 0] <- 0
+```
+
+`oneDay_PopDynamics()` applies death, maturation, pupation, releases, mating, and oviposition in one call. The difference therefore reflects all of those steps, not mating alone. Clipping negatives discards the mortality signal but the sign of the net change per cell depends on which effect dominates, so the result is unreliable.
+
+### Solution
+
+All individual lifecycle steps are public methods on the `Patch` R6 class. The mating function (`oneDay_mating_deterministic_Patch`) **only adds** to `popFemale` — it takes females from `popUnmated` and distributes them into `popFemale[i, ]` via a weighted outer product. It never subtracts.
+
+Therefore, a snapshot bracketing only the mating call is exact and produces no negatives:
+
+```r
+# Run all pre-mating steps individually
+patch$oneDay_adultD()
+patch$oneDay_pupaDM()
+patch$oneDay_larvaDM()
+patch$oneDay_eggDM()
+patch$oneDay_pupation()
+patch$oneDay_releases()
+
+# Exact newly mated females
+popFemale_pre_mating <- patch$get_femalePopulation()
+patch$oneDay_mating()
+newly_mated <- patch$get_femalePopulation() - popFemale_pre_mating
+
+# Complete the day
+patch$oneDay_layEggs()
+patch$oneDay_releaseEggs()
+```
+
+The `newly_mated[newly_mated < 0] <- 0` guard is no longer needed and was removed.
+
+Note: if mated female releases are scheduled (via `matedFemaleReleases`), they are applied in `oneDay_releases()` — before the pre-mating snapshot — so they are correctly excluded from `newly_mated`. If such releases should also be registered in `mm_state`, a separate mechanism would be needed. The current example has no releases.
+
+---
+
 ## Known issues / outstanding items
 
-- **`newly_mated` extraction is incorrect.** The example computes `newly_mated` as `popFemale_after - popFemale_before` where both snapshots bracket a full `oneDay_PopDynamics()` call. That call applies death, maturation, pupation, releases, mating, and oviposition — not just mating. The difference reflects all of these, not mating alone. Approach to fix: TBD (next session).
 - **`omega_f` handling.** If genotype-specific female mortality fitness (`omega_f`) differs across genotypes, `survival_f` should be computed as `1 - muAd * omega_f` (vector). The example uses a uniform scalar which is only exact when `omega_f = rep(1, nGeno)`.

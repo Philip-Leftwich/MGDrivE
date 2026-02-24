@@ -116,6 +116,34 @@ Note: if mated female releases are scheduled (via `matedFemaleReleases`), they a
 
 ---
 
+---
+
+## Session 4 — Code audit and fixes
+
+**Files modified:** `multi_mating.R`, `task_log.md`
+
+Four issues identified by cross-checking `task_log.md` against the R source files.
+
+### Fix 1 — `example_usage` docstring out of date (Issue 1, must fix)
+
+The `\dontrun{}` example in the `example_usage` function had not been updated to reflect either Session 2 (vector `rho`, `survival_f`) or Session 3 (correct `newly_mated` extraction via individual lifecycle steps). The old pattern used `popFemale_after - popFemale_before` with negative clipping. Replaced with the correct pattern matching `example_simulation.R`.
+
+### Fix 2 — `rmultinom` matrix coercion in `remate_stochastic` (Issue 2)
+
+`rmultinom(n = 1, ...)` returns an `nGeno × 1` matrix. Adding this to `state$popFemale_buffer[i, , 1]` (a vector) produced a matrix via R's implicit coercion, which was then assigned back to the array slice relying on silent element-count matching. Wrapped with `drop()` to explicitly convert the result to a plain named vector before the addition.
+
+### Fix 3 — Indentation inconsistencies (Issue 3)
+
+Two comment lines were not indented to match their surrounding code block:
+- Line 44 (`# Buffer for recently mated females`) inside `init_multiMating`
+- Line 616 (`# Total by mate genotype`) inside `summarise_multiMating`
+
+### Fix 4 — `calc_switching_rate` precondition documented (Issue 4)
+
+Added a docstring note that the zero-sum assumption underlying `sum(abs(delta)) / 2` only holds when the two states differ solely due to remating. Calling the function around a full `oneDay_multiMating` call (which also applies mortality) violates this assumption.
+
+---
+
 ## Known issues / outstanding items
 
 - **`omega_f` handling.** If genotype-specific female mortality fitness (`omega_f`) differs across genotypes, `survival_f` should be computed as `1 - muAd * omega_f` (vector). The example uses a uniform scalar which is only exact when `omega_f = rep(1, nGeno)`.

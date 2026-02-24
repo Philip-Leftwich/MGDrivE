@@ -41,7 +41,7 @@ init_multiMating <- function(genotypesN, genotypesID, T_refractory) {
     dimnames = list(genotypesID, genotypesID)
   )
 
-# Buffer for recently mated females (days 1 to T_refractory)
+  # Buffer for recently mated females (days 1 to T_refractory)
   # Third dimension is days since mating: 1 = just mated today, T_refractory = about to become eligible
   popFemale_buffer <- array(
     data = 0,
@@ -402,9 +402,11 @@ remate_stochastic <- function(state, popMale, base_eta, rho, lambda,
       # Remove from current (i, j) cohort
       state$popFemale_eligible[i, j] <- n_eligible - n_remating
 
-      # Choose new mates and add to buffer at day 1
+      # Choose new mates and add to buffer at day 1.
+      # drop() converts the nGeno x 1 matrix from rmultinom to a plain vector,
+      # avoiding implicit coercion when assigning back to the array slice.
       if (sum(mate_probs) > 0) {
-        new_mates <- rmultinom(n = 1, size = n_remating, prob = mate_probs)
+        new_mates <- drop(rmultinom(n = 1, size = n_remating, prob = mate_probs))
         state$popFemale_buffer[i, , 1] <- state$popFemale_buffer[i, , 1] + new_mates
       }
     }
@@ -613,7 +615,7 @@ summarise_multiMating <- function(state) {
   # Total by female genotype
   by_female <- rowSums(total_mated)
 
-# Total by mate genotype
+  # Total by mate genotype
   by_mate <- colSums(total_mated)
 
   # Totals in each pool
@@ -638,10 +640,15 @@ summarise_multiMating <- function(state) {
 #' Calculate Mate Switching Rate
 #'
 #' Compares mating distribution before and after remating to quantify
-#' how much mate-switching occurred.
+#' how much mate-switching occurred. The calculation assumes changes are
+#' zero-sum: females leave one (i, j) cohort and enter another. This
+#' assumption only holds when the two states differ solely due to remating.
+#' Do NOT call this function bracketing a full \code{oneDay_multiMating}
+#' call, as the mortality step makes changes non-zero-sum and the result
+#' will be meaningless.
 #'
-#' @param state_before MultiMating state before remating
-#' @param state_after MultiMating state after remating
+#' @param state_before MultiMating state captured immediately before remating
+#' @param state_after MultiMating state captured immediately after remating
 #'
 #' @return List with switching statistics
 #'
@@ -682,12 +689,16 @@ calc_switching_rate <- function(state_before, state_after) {
 #' \dontrun{
 #' # After setting up MGDrivE network...
 #'
-#' # Initialize multiple mating state
+#' muAd <- 0.09
+#'
+#' # rho is a vector: one value per male genotype (ordered to match genotypesID).
+#' # Females mated to preferred males remate less readily.
 #' mm_params <- list(
-#'   T_refractory = 3,        # 3 day refractory period
-#'   rho = 0.1,               # 10% base remating propensity
-#'   lambda = 0.01,           # encounter rate
+#'   T_refractory = 3,
+#'   rho = c(AA = 0.02, Aa = 0.05, aa = 0.08),
+#'   lambda = 0.01,
 #'   stochastic = TRUE,
+#'   survival_f = rep(1 - muAd, 3),
 #'   modulate_fn = modulate_choosiness_linear,
 #'   modulate_params = list(strictness = 0.2)
 #' )
@@ -699,26 +710,24 @@ calc_switching_rate <- function(state_before, state_after) {
 #' # Get base eta from drive cube
 #' base_eta <- driveCube$eta
 #'
-#' # In daily simulation loop:
+#' # In daily simulation loop, run lifecycle steps individually so the mating
+#' # event can be isolated. oneDay_mating() only adds to popFemale (from
+#' # popUnmated), so bracketing just that call gives exact newly mated females.
 #' for (day in 1:simTime) {
 #'
-#'   # Record female population before mating
-#'   popFemale_before <- patch$get_femalePopulation()
+#'   patch$oneDay_adultD()
+#'   patch$oneDay_pupaDM()
+#'   patch$oneDay_larvaDM()
+#'   patch$oneDay_eggDM()
+#'   patch$oneDay_pupation()
+#'   patch$oneDay_releases()
 #'
-#'   # Run standard MGDrivE daily dynamics
-#'   # ... (death, maturation, pupation, releases, mating, oviposition)
+#'   popFemale_pre_mating <- patch$get_femalePopulation()
+#'   patch$oneDay_mating()
+#'   newly_mated <- patch$get_femalePopulation() - popFemale_pre_mating
 #'
-#'   # Get population after mating
-#'   popFemale_after <- patch$get_femalePopulation()
-#'
-#'   # Extract newly mated females (difference)
-#'   newly_mated <- popFemale_after - popFemale_before
-#'   newly_mated[newly_mated < 0] <- 0  # only additions
-#'
-#'   # Get current male population
 #'   popMale <- patch$get_malePopulation()
 #'
-#'   # Run multiple mating dynamics
 #'   mm_state <- oneDay_multiMating(
 #'     state = mm_state,
 #'     popMale = popMale,
@@ -727,7 +736,9 @@ calc_switching_rate <- function(state_before, state_after) {
 #'     params = mm_params
 #'   )
 #'
-#'   # The total mated population for analysis
+#'   patch$oneDay_layEggs()
+#'   patch$oneDay_releaseEggs()
+#'
 #'   total_mated <- get_total_mated(mm_state)
 #' }
 #' }
